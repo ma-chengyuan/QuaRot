@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.11)
-project(quarot LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+
+project(quarot LANGUAGES CXX CUDA)
+
+find_package(Python REQUIRED COMPONENTS Development)
+find_package(Torch REQUIRED)
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES 86)
+endif()
 
 find_package(Git REQUIRED)
 if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
@@ -29,4 +39,10 @@ foreach(dir ${dirs})
   message(STATUS "dir='${dir}'")
 endforeach()
 
-# add_subdirectory(quarot/kernels)
+add_library(quarot SHARED 
+  quarot/kernels/bindings.cpp 
+  quarot/kernels/gemm.cu 
+  quarot/kernels/quant.cu 
+  quarot/kernels/flashinfer.cu)
+
+target_link_libraries(quarot PRIVATE ${TORCH_LIBRARIES} Python::Python)

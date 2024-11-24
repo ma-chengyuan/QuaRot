@@ -1,0 +1,13 @@
+CompileFlags:
+  Remove:
+    - -rdc=true
+    - -ccbin=*
+    - -forward-unknown-to-host-compiler
+    - --generate-code=*
+    - -gencode
+    - -Xcompiler=*
+    - -Xcudafe
+    - --expt*
+    - --diag_suppress=*
+  Add:
+    - --cuda-gpu-arch=sm_86
