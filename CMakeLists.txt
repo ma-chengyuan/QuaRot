@@ -6,7 +6,9 @@ set(CMAKE_CUDA_STANDARD 17)
 project(quarot LANGUAGES CXX CUDA)
 
 find_package(Python REQUIRED COMPONENTS Development)
-find_package(Torch REQUIRED)
+if(CLANGD)
+  find_package(Torch REQUIRED)
+endif()
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 86)
 endif()
@@ -39,10 +41,12 @@ foreach(dir ${dirs})
   message(STATUS "dir='${dir}'")
 endforeach()
 
-add_library(quarot SHARED 
-  quarot/kernels/bindings.cpp 
-  quarot/kernels/gemm.cu 
-  quarot/kernels/quant.cu 
-  quarot/kernels/flashinfer.cu)
+if(CLANGD)
+  add_library(quarot SHARED 
+    quarot/kernels/bindings.cpp 
+    quarot/kernels/gemm.cu 
+    quarot/kernels/quant.cu 
+    quarot/kernels/flashinfer.cu)
 
-target_link_libraries(quarot PRIVATE ${TORCH_LIBRARIES} Python::Python)
+  target_link_libraries(quarot PRIVATE ${TORCH_LIBRARIES} Python::Python)
+endif()

@@ -1,24 +1,26 @@
-import torch
-from quarot.nn import Linear4bit, Quantizer, OnlineHadamard
-import time
 import argparse
-import numpy as np
 import pprint
+import time
+
+import numpy as np
+import torch
+
+from quarot.nn import Linear4bit, OnlineHadamard, Quantizer
 
 model_sizes = [
     (4096, 4096), #llama-7b
-    (5120, 5120), #llama-13b
-    (8192, 8192)  #llama-70b   
+    # (5120, 5120), #llama-13b
+    # (8192, 8192)  #llama-70b   
 ]
 
 mlp_sizes = [
     (4096, 11008), #llama-7b
-    (5120, 13824), #llama-13b
-    (8192, 28672)  #llama-70b
+    # (5120, 13824), #llama-13b
+    # (8192, 28672)  #llama-70b
 ]
 benchmark_dtypes = [torch.float16]
 num_warmup_steps = 5
-num_bench_steps = 100
+num_bench_steps = 1
 
 
 def module_benchmark(module, x):
@@ -87,23 +89,23 @@ def linear4bit_benchmark(args):
 
             print(f"{dtype}. Sizes: {baseline_mod.weight.shape}")
             times_4bit = []
-            for i in range(10):
+            for i in range(1):
                 times_4bit.append(module_benchmark(int4_mod, x))
             print(f"Int4 time: {np.mean(times_4bit):.3f} +- {1.96 * np.std(times_4bit):.3f}ms")
             
             times_4bit_had = []
-            for i in range(10):
+            for i in range(1):
                 times_4bit_had.append(module_benchmark(int4_mod_had, x))
             print(f"Int4 (+FP32had) time: {np.mean(times_4bit_had):.3f} +- {1.96 * np.std(times_4bit_had):.3f}ms")
             
             times_4bit_fp16had = []
-            for i in range(10):
+            for i in range(1):
                 times_4bit_fp16had.append(module_benchmark(int4_mod_fp16had, x))
             print(f"Int4 (+FP16had) time: {np.mean(times_4bit_fp16had):.3f} +- {1.96 * np.std(times_4bit_fp16had):.3f}ms")
             
             
             times_baseline = []
-            for i in range(10):
+            for i in range(1):
                 times_baseline.append(module_benchmark(baseline_mod, x))
             print(f"FP16 time: {np.mean(times_baseline):.3f} +- {1.96 * np.std(times_baseline):.3f}ms")
             

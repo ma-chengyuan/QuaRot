@@ -9,9 +9,15 @@
 //#include <cutlass/subbyte_reference.h>
 #include <int4.h>
 
+#ifdef __CUDACC__
 #define HOST_DEVICE __forceinline__ __host__ __device__
 #define DEVICE __forceinline__ __device__
 #define HOST __forceinline__ __host__
+#else
+#define HOST_DEVICE inline
+#define DEVICE inline
+#define HOST inline
+#endif
 
 HOST void ensure(bool condition, const std::string& msg) {
     if (!condition) {

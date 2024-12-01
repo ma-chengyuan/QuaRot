@@ -1,8 +1,10 @@
-from setuptools import setup
-import torch.utils.cpp_extension as torch_cpp_ext
-from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 import os
 import pathlib
+
+import torch.utils.cpp_extension as torch_cpp_ext
+from setuptools import setup
+from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+
 setup_dir = os.path.dirname(os.path.realpath(__file__))
 HERE = pathlib.Path(__file__).absolute().parent
 
@@ -21,13 +23,15 @@ def remove_unwanted_pytorch_nvcc_flags():
 
 def get_cuda_arch_flags():
     return [
-        '-gencode', 'arch=compute_75,code=sm_75',  # Turing
+        # '-gencode', 'arch=compute_75,code=sm_75',  # Turing
         '-gencode', 'arch=compute_80,code=sm_80',  # Ampere
         '-gencode', 'arch=compute_86,code=sm_86',  # Ampere
     ]
     
 def third_party_cmake():
-    import subprocess, sys, shutil
+    import shutil
+    import subprocess
+    import sys
     
     cmake = shutil.which('cmake')
     if cmake is None:
@@ -64,7 +68,7 @@ if __name__ == '__main__':
                 ],
                 extra_compile_args={
                     'cxx': [],
-                    'nvcc': get_cuda_arch_flags(),
+                    'nvcc': get_cuda_arch_flags() + ["-lineinfo"],
                 }
             )
         ],
