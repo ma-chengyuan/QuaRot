@@ -23,23 +23,6 @@ struct MatMulParams {
     constexpr static size_t REG_N = 8;
 };
 
-struct MatMulHadamardParams {
-    constexpr static size_t N_THR = 256;
-
-    constexpr static size_t SHM_M = 64;
-    constexpr static size_t SHM_N = 128;
-    constexpr static size_t SHM_K = 128;
-
-    constexpr static size_t CPY_K = 32; // Copy at the granularity of 16 bytes
-
-    constexpr static size_t MMA_M = 16;
-    constexpr static size_t MMA_N = 8;
-    constexpr static size_t MMA_K = 64;
-
-    constexpr static size_t REG_M = 2;
-    constexpr static size_t REG_N = 4;
-};
-
 template <typename A, typename B> auto ceil_div(A a, B b) { return (a + b - 1) / b; }
 
 template <typename P>
@@ -224,6 +207,23 @@ __global__ __launch_bounds__(P::N_THR) void matmul_kernel(const uint8_t *A, cons
 #undef unroll
 }
 
+struct MatMulHadamardParams {
+    constexpr static size_t N_THR = 256;
+
+    constexpr static size_t SHM_M = 64;
+    constexpr static size_t SHM_N = 128;
+    constexpr static size_t SHM_K = 128;
+
+    constexpr static size_t CPY_K = 32; // Copy at the granularity of 16 bytes
+
+    constexpr static size_t MMA_M = 8;
+    constexpr static size_t MMA_N = 16;
+    constexpr static size_t MMA_K = 64;
+
+    constexpr static size_t REG_M = 2;
+    constexpr static size_t REG_N = 4;
+};
+
 /**
  * Fused hadamard-linear kernel with group quantization.
  *
@@ -308,8 +308,8 @@ __global__ __launch_bounds__(P::N_THR) void matmul_hadamard_kernel(const half *A
 
     const size_t mma_wrp_m = wid / WRP_N * P::REG_M * P::MMA_M;
     const size_t mma_wrp_n = wid % WRP_N * P::REG_N * P::MMA_N;
-    const size_t mma_trd_m_ld_base = mma_wrp_m + lid % 8 + (gid % 2) * 8;
-    const size_t mma_trd_n_ld_base = mma_wrp_n + lid % 8;
+    const size_t mma_trd_m_ld_base = mma_wrp_m + lid % 8;
+    const size_t mma_trd_n_ld_base = mma_wrp_n + lid % 8 + (gid % 2) * 8;
 
     async_copy_to_smem(0);
 
@@ -318,33 +318,6 @@ __global__ __launch_bounds__(P::N_THR) void matmul_hadamard_kernel(const half *A
         swap(smem_B_cur, smem_B_next);
         swap(smem_A_scale_cur, smem_A_scale_next);
         async_copy_waitall();
-
-        /*
-        if (threadIdx.x == 0) {
-            constexpr size_t SHOW = 10;
-            const auto print_row = [&](size_t i) {
-                printf("        [");
-                const auto to_int4 = [](int8_t a) { return a > 7 ? a - 16 : a; };
-                for (size_t j = 0; j < SHOW; j += 2) {
-                    uint8_t packed = smem_A_cur[i * SHM_K_STRIDE<P> + j / EPB];
-                    printf("%2d, %2d, ", to_int4(packed & 0xf), to_int4(packed >> 4));
-                }
-                printf(" ..., ");
-                for (size_t j = P::SHM_K - SHOW; j < P::SHM_K; j += 2) {
-                    uint8_t packed = smem_A_cur[i * SHM_K_STRIDE<P> + j / EPB];
-                    printf("%2d, %2d", to_int4(packed & 0xf), to_int4(packed >> 4));
-                    if (j + 2 < P::SHM_K)
-                        printf(", ");
-                }
-                printf("],\n");
-            };
-            for (size_t i = 0; i < SHOW; i++)
-                print_row(i);
-            printf("        ...,\n");
-            for (size_t i = P::SHM_M - SHOW; i < P::SHM_M; i++)
-                print_row(i);
-        }
-        */
 
         __syncthreads();
         if (k + P::SHM_K < K) {
@@ -357,24 +330,34 @@ __global__ __launch_bounds__(P::N_THR) void matmul_hadamard_kernel(const half *A
                 unroll for (size_t k_ = 0; k_ < 4; k_++) { c[i][j][k_] = 0; }
             }
         }
+        // Transposed matrix multiplication: the MMA instruction expects the "A" matrix to be 16x64 (mxk) and
+        // "B" to be 8x64 (nxk), both k-major. In our case, it is better to load the real A matrix into the B
+        // position of the instruction and the real B matrix into the A position. This is fine because they
+        // have compatible layouts. This way, the tiles we get are shorter in the M dimension and longer in
+        // the N dimention. This has the following advantages:
+        // 1. The number of hadamard transforms we need to do is porportional to the M size of the tile, so
+        // the smaller the M, the better.
+        // 2. Having longer N dimension means that we'll have fewer thread blocks using the same M range but
+        // different N ranges. This improves the work efficiency of our algorithm.
+        // Of course, this would mean we have transposed output.
         unroll for (size_t k_ = 0; k_ < P::SHM_K; k_ += P::MMA_K) {
-            int32_t a[P::REG_M][4], b[P::REG_N][2];
-            unroll for (size_t i = 0; i < P::REG_M; i++) {
-                const size_t mma_trd_m = mma_trd_m_ld_base + i * P::MMA_M;
-                const size_t mma_trd_k = k_ + (gid / 2) * 32;
-                const size_t addr =
-                    __cvta_generic_to_shared(smem_A_cur + mma_trd_m * SHM_K_STRIDE<P> + mma_trd_k / EPB);
-                asm("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0, %1, %2, %3}, [%4];"
-                    : "=r"(a[i][0]), "=r"(a[i][1]), "=r"(a[i][2]), "=r"(a[i][3])
-                    : "l"(addr));
-            }
+            int32_t b[P::REG_N][4], a[P::REG_M][2];
             unroll for (size_t j = 0; j < P::REG_N; j++) {
                 const size_t mma_trd_n = mma_trd_n_ld_base + j * P::MMA_N;
-                const size_t mma_trd_k = k_ + gid * 32;
+                const size_t mma_trd_k = k_ + (gid / 2) * 32;
                 const size_t addr =
                     __cvta_generic_to_shared(smem_B_cur + mma_trd_n * SHM_K_STRIDE<P> + mma_trd_k / EPB);
+                asm("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0, %1, %2, %3}, [%4];"
+                    : "=r"(b[j][0]), "=r"(b[j][1]), "=r"(b[j][2]), "=r"(b[j][3])
+                    : "l"(addr));
+            }
+            unroll for (size_t i = 0; i < P::REG_M; i++) {
+                const size_t mma_trd_m = mma_trd_m_ld_base + i * P::MMA_M;
+                const size_t mma_trd_k = k_ + gid * 32;
+                const size_t addr =
+                    __cvta_generic_to_shared(smem_A_cur + mma_trd_m * SHM_K_STRIDE<P> + mma_trd_k / EPB);
                 asm("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0, %1}, [%2];"
-                    : "=r"(b[j][0]), "=r"(b[j][1])
+                    : "=r"(a[i][0]), "=r"(a[i][1])
                     : "l"(addr));
             }
             unroll for (size_t i = 0; i < P::REG_M; i++) {
@@ -385,35 +368,35 @@ __global__ __launch_bounds__(P::N_THR) void matmul_hadamard_kernel(const half *A
                         " {%8, %9},"
                         " {%10, %11, %12, %13};"
                         : "=r"(c[i][j][0]), "=r"(c[i][j][1]), "=r"(c[i][j][2]), "=r"(c[i][j][3])
-                        : "r"(a[i][0]), "r"(a[i][1]), "r"(a[i][2]), "r"(a[i][3]), "r"(b[j][0]), "r"(b[j][1]),
+                        : "r"(b[j][0]), "r"(b[j][1]), "r"(b[j][2]), "r"(b[j][3]), "r"(a[i][0]), "r"(a[i][1]),
                           "r"(c[i][j][0]), "r"(c[i][j][1]), "r"(c[i][j][2]), "r"(c[i][j][3]));
                 }
             }
         }
         unroll for (size_t i = 0; i < P::REG_M; i++) {
-            const size_t mma_trd_m1 = mma_wrp_m + i * P::MMA_M + lid / 4;
+            const size_t mma_trd_m1 = mma_wrp_m + i * P::MMA_M + (lid % 4) * 2;
             const float scale_1 = __half2float(reinterpret_cast<half *>(smem_A_scale_cur)[mma_trd_m1]);
-            const size_t mma_trd_m2 = mma_trd_m1 + 8;
+            const size_t mma_trd_m2 = mma_trd_m1 + 1;
             const float scale_2 = __half2float(reinterpret_cast<half *>(smem_A_scale_cur)[mma_trd_m2]);
             unroll for (size_t j = 0; j < P::REG_N; j++) {
                 cf[i][j][0] += scale_1 * __int2float_rn(c[i][j][0]);
-                cf[i][j][1] += scale_1 * __int2float_rn(c[i][j][1]);
-                cf[i][j][2] += scale_2 * __int2float_rn(c[i][j][2]);
+                cf[i][j][1] += scale_2 * __int2float_rn(c[i][j][1]);
+                cf[i][j][2] += scale_1 * __int2float_rn(c[i][j][2]);
                 cf[i][j][3] += scale_2 * __int2float_rn(c[i][j][3]);
             }
         }
     }
     unroll for (size_t i = 0; i < P::REG_M; i++) {
         unroll for (size_t j = 0; j < P::REG_N; j++) {
-            const size_t mma_trd_m = mma_wrp_m + i * P::MMA_M + lid / 4;
-            const size_t mma_trd_n = mma_wrp_n + j * P::MMA_N + (lid % 4) * 2;
+            const size_t mma_trd_m = mma_wrp_m + i * P::MMA_M + (lid % 4) * 2;
+            const size_t mma_trd_n = mma_wrp_n + j * P::MMA_N + lid / 4;
             const size_t gmem_m = mma_trd_m + blockIdx.x * P::SHM_M;
             const size_t gmem_n = mma_trd_n + blockIdx.y * P::SHM_N;
             assert(gmem_m < M && gmem_n < N);
             C[(gmem_m + 0) * N + gmem_n + 0] = __float2half(cf[i][j][0]);
-            C[(gmem_m + 0) * N + gmem_n + 1] = __float2half(cf[i][j][1]);
-            C[(gmem_m + 8) * N + gmem_n + 0] = __float2half(cf[i][j][2]);
-            C[(gmem_m + 8) * N + gmem_n + 1] = __float2half(cf[i][j][3]);
+            C[(gmem_m + 1) * N + gmem_n + 0] = __float2half(cf[i][j][1]);
+            C[(gmem_m + 0) * N + gmem_n + 8] = __float2half(cf[i][j][2]);
+            C[(gmem_m + 1) * N + gmem_n + 8] = __float2half(cf[i][j][3]);
         }
     }
 #undef unroll
