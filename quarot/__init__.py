@@ -1,6 +1,5 @@
-import torch
-
 import quarot._CUDA
+import torch
 
 from . import functional, nn
 
@@ -38,11 +37,17 @@ def matmul(A, B):
     B, B_shape_excl_last = flatten_last_dim_and_return_shape(B)
     return quarot._CUDA.matmul(A, B).view(*A_shape_excl_last, *B_shape_excl_last)
 
-def matmul_fused(A, B):
+def matmul_handwritten(A, B):
     assert A.shape[-1] % 32 == 0, "A.shape[-1]: {} must be multiplication of 32".format(A.shape[-1])
     A, A_shape_excl_last = flatten_last_dim_and_return_shape(A)
     B, B_shape_excl_last = flatten_last_dim_and_return_shape(B)
-    return quarot._CUDA.matmul_fused(A, B).view(*A_shape_excl_last, *B_shape_excl_last)
+    return quarot._CUDA.matmul_handwritten(A, B).view(*A_shape_excl_last, *B_shape_excl_last)
+
+def matmul_hadamard(A, B):
+    assert A.shape[-1] % 32 == 0, "A.shape[-1]: {} must be multiplication of 32".format(A.shape[-1])
+    A, A_shape_excl_last = flatten_last_dim_and_return_shape(A)
+    B, B_shape_excl_last = flatten_last_dim_and_return_shape(B)
+    return quarot._CUDA.matmul_hadamard(A, B).view(*A_shape_excl_last, *B_shape_excl_last)
 
 def sym_quant(x, scale):
     assert x.dtype == scale.dtype == torch.float16
