@@ -3,9 +3,10 @@ import numpy as np
 import torch
 from quarot import matmul, matmul_hadamard, matmul_handwritten
 from quarot.functional.quantization import pack_i4, unpack_i4
+from quarot.nn import Linear4bit, OnlineHadamard, Quantizer
 from scipy.linalg import hadamard as scipy_hadamard
 
-# ncu -f -o profile --set detailed --target-processes all -k regex:"matmul_hadamard_kernel" python benchmarks/test_fused.py
+# ncu -f -o profile --set detailed --target-processes all -k regex:"matmul_hadamard_kernel|Kernel" python benchmarks/test_fused.py
 
 
 def test_matmul_handwritten():
@@ -33,7 +34,7 @@ def main():
     torch.set_printoptions(edgeitems=10, linewidth=1000, sci_mode=False)
     size = (4096, 4096)
 
-    A = torch.randn(size, dtype=torch.float16, requires_grad=False).to("cuda")
+    A = torch.randn(size, dtype=torch.float16).to("cuda")
     A_h = segment_wise_hadamard(A)
     # scale = torch.max(torch.abs(A_h), dim=1, keepdim=True).values / 7
     # A_hq = (A_h / scale).round().to(torch.int8)
@@ -46,6 +47,21 @@ def main():
     # A_int4 = pack_i4(A_hq)
 
     C = matmul_hadamard(A, B)
+
+    # Baseline: unfused implementation
+    baseline_mod = (
+        torch.nn.Linear(size[0], size[1], bias=False).cuda().to(torch.float16)
+    )
+    baseline_mod.weight.data = torch.randint_like(
+        baseline_mod.weight.data, low=-8, high=7
+    ).to(torch.float16)
+    s_w = torch.ones((size[1], 1), dtype=torch.float16, device="cuda")
+    int4_mod_fp16had = torch.nn.Sequential(
+        OnlineHadamard(baseline_mod.in_features, force_fp32=False),
+        Quantizer(input_clip_ratio=1.0),
+        Linear4bit.from_float(baseline_mod, weight_scales=s_w),
+    ).cuda()
+    res = int4_mod_fp16had(A[None, :, :])
 
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
     vmin = min(C.min(), C_gt.min())
