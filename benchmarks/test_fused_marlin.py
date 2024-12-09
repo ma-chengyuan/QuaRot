@@ -7,17 +7,18 @@ from quarot.nn import Linear4bit, OnlineHadamard, Quantizer
 from scipy.linalg import hadamard as scipy_hadamard
 import marlin_reproduction
 import marlin
+import torch.nn as nn
 # ncu -f -o profile --set detailed --target-processes all -k regex:"matmul_hadamard_kernel|Kernel" python benchmarks/test_fused.py
 
-
+DEV = "cuda"
 def test_matmul_handwritten():
     size = [4096, 4096]
     A = torch.randint(
         1, 7, (size[0], size[1] // 2), dtype=torch.uint8, requires_grad=False
-    ).to("cuda")
+    ).to(DEV)
     B = torch.randint(
         1, 7, (size[0], size[1] // 2), dtype=torch.uint8, requires_grad=False
-    ).to("cuda")
+    ).to(DEV)
     C = matmul(A, B)
     C_ = matmul_handwritten(A, B)
     assert torch.all(C == C_)
@@ -25,11 +26,11 @@ def test_matmul_handwritten():
 
 def segment_wise_hadamard(A):
     L = 128
-    H = torch.as_tensor(scipy_hadamard(L)).to(torch.float16).to("cuda")
+    H = torch.as_tensor(scipy_hadamard(L)).to(torch.float16).to(DEV)
     H = torch.block_diag(*[H] * (A.shape[1] // L))
     return A @ H
 
-def gen_quant4(m, n, groupsize=-1):
+def gen_quant4(m, n, groupsize=-1, is_reproduction=False):
     tile = 16
     maxq = 2 ** 4 - 1
     w = torch.randn((m, n), dtype=torch.half, device=DEV)
@@ -55,7 +56,10 @@ def gen_quant4(m, n, groupsize=-1):
     linear = nn.Linear(m, n)
     linear.weight.data = ref.t()
     # Workaround to test some special cases that are forbidden by the API
-    layer = marlin.Layer(256, 256, groupsize=groupsize)
+    if is_reproduction:
+        layer = marlin_reproduction.Layer(256, 256, groupsize=groupsize)
+    else:
+        layer = marlin.Layer(256, 256, groupsize=groupsize)
     if groupsize == -1:
         groupsize = m
     layer.k = m
@@ -74,16 +78,16 @@ def main():
     torch.set_printoptions(edgeitems=10, linewidth=1000, sci_mode=False)
     size = (4096, 4096)
 
-    A = torch.randn(size, dtype=torch.float16).to("cuda")
+    A = torch.randn(size, dtype=torch.float16).to(DEV)
     A_h = segment_wise_hadamard(A)
     # scale = torch.max(torch.abs(A_h), dim=1, keepdim=True).values / 7
     # A_hq = (A_h / scale).round().to(torch.int8)
     # B = torch.randint(
     #     1, 7, (size[0], size[1] // 2), dtype=torch.uint8, requires_grad=False
-    # ).to("cuda")
-    groupsize = 128
-    B_ref, B, s = gen_quant4(size[0], size[1], groupsize=groupsize)
-    B_fp16 = unpack_i4(B).to(torch.float16)
+    # ).to(DEV)
+    groupsize = 128 
+    B_fp16, B, s = gen_quant4(size[0], size[1], groupsize=groupsize)
+    # B_fp16 = unpack_i4(B).to(torch.float16)
     C_gt = A_h @ B_fp16.T
     # C_gtq = A_hq.to(torch.float16) @ B_fp16.T
     # A_int4 = pack_i4(A_hq)
@@ -97,7 +101,7 @@ def main():
     baseline_mod.weight.data = torch.randint_like(
         baseline_mod.weight.data, low=-8, high=7
     ).to(torch.float16)
-    s_w = torch.ones((size[1], 1), dtype=torch.float16, device="cuda")
+    s_w = torch.ones((size[1], 1), dtype=torch.float16, device=DEV)
     int4_mod_fp16had = torch.nn.Sequential(
         OnlineHadamard(baseline_mod.in_features, force_fp32=False),
         Quantizer(input_clip_ratio=1.0),
