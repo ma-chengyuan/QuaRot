@@ -1,12 +1,13 @@
-import marlin
 import marlin_reproduction
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from quarot import matmul, matmul_hadamard, matmul_handwritten
 from quarot.functional.quantization import pack_i4, unpack_i4
 from quarot.nn import Linear4bit, OnlineHadamard, Quantizer
 from scipy.linalg import hadamard as scipy_hadamard
+from torch import nn
 
 # ncu -f -o profile --set detailed --target-processes all -k regex:"hadamard|^Kernel$|quant" python benchmarks/test_fused.py
 
@@ -34,7 +35,7 @@ def segment_wise_hadamard(A):
 def main():
     torch.manual_seed(2)
     torch.set_printoptions(edgeitems=10, linewidth=1000, sci_mode=False)
-    size = (4096, 4096)
+    size = (256, 256)
 
     A = torch.randn(size, dtype=torch.float16).to("cuda")
     A_h = segment_wise_hadamard(A)
@@ -65,7 +66,7 @@ def main():
     ).cuda()
     res = int4_mod_fp16had(A[None, :, :])
 
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
+    fig, (ax1, ax2, ax3, cax) = plt.subplots(1, 4, figsize=(15, 5), width_ratios=[1, 1, 1, 0.05])
     vmin = min(C.min(), C_gt.min())
     vmax = max(C.max(), C_gt.max())
     args = {
@@ -79,9 +80,15 @@ def main():
     ax2.set_title("C ground truth")
     ax2.imshow(C_gt.cpu().numpy(), **args)
     ax3.set_title("difference")
-    ax3.imshow((C - C_gt).cpu().numpy(), **args)
-    # plt.hist((C - C_gt).cpu().numpy().flatten(), bins=100)
+    im = ax3.imshow((C - C_gt).cpu().numpy(), **args)
+
+    # divider = make_axes_locatable(ax3)
+    # cax = divider.append_axes("right", size="5%", pad=0.05)
+    fig.colorbar(im, cax=cax)
+    fig.tight_layout()
+
     plt.show(block=True)
+    fig.savefig("fused_quant_w4a4.png", dpi=300)
 
 
 if __name__ == "__main__":

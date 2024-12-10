@@ -1,13 +1,14 @@
+import marlin_reproduction
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+# import marlin
+import torch.nn as nn
 from quarot import matmul, matmul_hadamard, matmul_handwritten
 from quarot.functional.quantization import pack_i4, unpack_i4
 from quarot.nn import Linear4bit, OnlineHadamard, Quantizer
 from scipy.linalg import hadamard as scipy_hadamard
-import marlin_reproduction
-import marlin
-import torch.nn as nn
+
 # ncu -f -o profile --set detailed --target-processes all -k regex:"matmul_hadamard_kernel|Kernel" python benchmarks/test_fused.py
 
 DEV = "cuda"
@@ -56,10 +57,7 @@ def gen_quant4(m, n, groupsize=-1, is_reproduction=False):
     linear = nn.Linear(m, n)
     linear.weight.data = ref.t()
     # Workaround to test some special cases that are forbidden by the API
-    if is_reproduction:
-        layer = marlin_reproduction.Layer(256, 256, groupsize=groupsize)
-    else:
-        layer = marlin.Layer(256, 256, groupsize=groupsize)
+    layer = marlin_reproduction.Layer(256, 256, groupsize=groupsize)
     if groupsize == -1:
         groupsize = m
     layer.k = m
@@ -87,6 +85,7 @@ def main():
     # ).to(DEV)
     groupsize = 128 
     B_fp16, B, s = gen_quant4(size[0], size[1], groupsize=groupsize)
+    print(B.shape)
     # B_fp16 = unpack_i4(B).to(torch.float16)
     C_gt = A_h @ B_fp16.T
     # C_gtq = A_hq.to(torch.float16) @ B_fp16.T
