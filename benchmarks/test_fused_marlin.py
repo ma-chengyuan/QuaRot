@@ -111,7 +111,7 @@ def main():
     # Baseline: unfused implementation
     C =  torch.zeros((m, n), dtype=torch.float16, device=DEV)
     A_had = hadamard_transform(A)
-    marlin_reproduction.mul(A_had, B, C, s, workspace, thread_k, thread_n, -1)
+    marlin_reproduction.mul(A_had, B, C, s, workspace, -1, -1, -1)
     torch.cuda.synchronize()
     for idx, (c_row, c_ref_row) in enumerate(zip(C, C_gt)): 
         print(idx)

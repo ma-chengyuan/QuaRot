@@ -81,6 +81,7 @@ def main():
     ax3.set_title("difference")
     ax3.imshow((C - C_gt).cpu().numpy(), **args)
     # plt.hist((C - C_gt).cpu().numpy().flatten(), bins=100)
+    plt.savefig("fused_quant.png")
     plt.show(block=True)
 
 
