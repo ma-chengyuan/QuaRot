@@ -218,14 +218,12 @@ __global__ __launch_bounds__(P::N_THR) void matmul_kernel(const uint8_t *A, cons
 #undef unroll
 }
 
-struct MatMulHadamardParams {
+struct MatMulHadamardParams128 {
     constexpr static size_t N_THR = 256;
 
     constexpr static size_t SHM_M = 16;
     constexpr static size_t SHM_N = 512;
     constexpr static size_t SHM_K = 128;
-
-    // constexpr static size_t CPY_K = 32; // Copy at the granularity of 16 bytes
 
     constexpr static size_t MMA_M = 8;
     constexpr static size_t MMA_N = 16;
@@ -233,6 +231,21 @@ struct MatMulHadamardParams {
 
     constexpr static size_t REG_M = 2;
     constexpr static size_t REG_N = 4;
+};
+
+struct MatMulHadamardParams256 {
+    constexpr static size_t N_THR = 256;
+
+    constexpr static size_t SHM_M = 16;
+    constexpr static size_t SHM_N = 256;
+    constexpr static size_t SHM_K = 256;
+
+    constexpr static size_t MMA_M = 8;
+    constexpr static size_t MMA_N = 16;
+    constexpr static size_t MMA_K = 64;
+
+    constexpr static size_t REG_M = 2;
+    constexpr static size_t REG_N = 2;
 };
 
 template <typename P> struct MatmulHadamardDerivedParams {
@@ -451,7 +464,7 @@ void matmul_host_handwritten(const Int4Storage *A, const Int4Storage *B, uint32_
 }
 
 void matmul_hadamard_host(const half *A, const Int4Storage *B, uint32_t M, uint32_t N, uint32_t K, half *C) {
-    using P = MatMulHadamardParams;
+    using P = MatMulHadamardParams256;
 
     const dim3 dim_block{P::N_THR};
     const dim3 dim_grid(ceil_div(M, P::SHM_M), ceil_div(N, P::SHM_N));

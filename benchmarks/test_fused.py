@@ -1,3 +1,5 @@
+import marlin
+import marlin_reproduction
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -5,9 +7,8 @@ from quarot import matmul, matmul_hadamard, matmul_handwritten
 from quarot.functional.quantization import pack_i4, unpack_i4
 from quarot.nn import Linear4bit, OnlineHadamard, Quantizer
 from scipy.linalg import hadamard as scipy_hadamard
-import marlin_reproduction
-import marlin
-# ncu -f -o profile --set detailed --target-processes all -k regex:"matmul_hadamard_kernel|Kernel" python benchmarks/test_fused.py
+
+# ncu -f -o profile --set detailed --target-processes all -k regex:"hadamard|^Kernel$|quant" python benchmarks/test_fused.py
 
 
 def test_matmul_handwritten():
@@ -24,7 +25,7 @@ def test_matmul_handwritten():
 
 
 def segment_wise_hadamard(A):
-    L = 128
+    L = 256
     H = torch.as_tensor(scipy_hadamard(L)).to(torch.float16).to("cuda")
     H = torch.block_diag(*[H] * (A.shape[1] // L))
     return A @ H
