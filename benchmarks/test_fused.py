@@ -30,45 +30,6 @@ def segment_wise_hadamard(A):
     H = torch.block_diag(*[H] * (A.shape[1] // L))
     return A @ H
 
-def gen_quant4(m, n, groupsize=-1):
-    tile = 16
-    maxq = 2 ** 4 - 1
-    w = torch.randn((m, n), dtype=torch.half, device=DEV)
-    if groupsize != -1:
-        w = w.reshape((-1, groupsize, n))
-        w = w.permute(1, 0, 2)
-        w = w.reshape((groupsize, -1))
-    s = torch.max(torch.abs(w), 0, keepdim=True)[0]
-    s *= 2 / maxq
-    w = torch.round(w / s).int()
-    w += (maxq + 1) // 2
-    w = torch.clamp(w, 0, maxq)
-    ref = (w - (maxq + 1) // 2).half() * s
-    if groupsize != -1:
-        def reshape(w):
-            w = w.reshape((groupsize, -1, n))
-            w = w.permute(1, 0, 2)
-            w = w.reshape((m, n)).contiguous()
-            return w
-        ref = reshape(ref)
-        w = reshape(w)
-    s = s.reshape((-1, n)).contiguous()
-    linear = nn.Linear(m, n)
-    linear.weight.data = ref.t()
-    # Workaround to test some special cases that are forbidden by the API
-    layer = marlin.Layer(256, 256, groupsize=groupsize)
-    if groupsize == -1:
-        groupsize = m
-    layer.k = m
-    layer.n = n
-    layer.groupsize = groupsize
-    layer.B = torch.empty((m // 16, n * 16 // 8), dtype=torch.int, device=DEV)
-    layer.s = torch.empty((m // groupsize, n), dtype=torch.half, device=DEV)
-    layer.pack(linear, s.t())
-    q = layer.B
-    s = layer.s
-    return ref, q, s
-
 
 def main():
     torch.manual_seed(2)
@@ -79,11 +40,9 @@ def main():
     A_h = segment_wise_hadamard(A)
     # scale = torch.max(torch.abs(A_h), dim=1, keepdim=True).values / 7
     # A_hq = (A_h / scale).round().to(torch.int8)
-    # B = torch.randint(
-    #     1, 7, (size[0], size[1] // 2), dtype=torch.uint8, requires_grad=False
-    # ).to("cuda")
-    groupsize = 128
-    B_ref, B, s = gen_quant4(size[0], size[1], groupsize=groupsize)
+    B = torch.randint(
+        1, 7, (size[0], size[1] // 2), dtype=torch.uint8, requires_grad=False
+    ).to("cuda")
     B_fp16 = unpack_i4(B).to(torch.float16)
     C_gt = A_h @ B_fp16.T
     # C_gtq = A_hq.to(torch.float16) @ B_fp16.T

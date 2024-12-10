@@ -95,7 +95,7 @@ def main():
     C = matmul_hadamard(A, B)
 
     # Baseline: unfused implementation
-    baseline_mod = (
+    baseline_mod = (g
         torch.nn.Linear(size[0], size[1], bias=False).cuda().to(torch.float16)
     )
     baseline_mod.weight.data = torch.randint_like(
