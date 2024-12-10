@@ -113,11 +113,11 @@ def main():
     A_had = hadamard_transform(A)
     marlin_reproduction.mul(A_had, B, C, s, workspace, -1, -1, -1)
     torch.cuda.synchronize()
-    for idx, (c_row, c_ref_row) in enumerate(zip(C, C_gt)): 
-        print(idx)
-        print(' '.join(f'{i:>7d}' for i in range(len(c_row))))
-        print(' '.join(f'{x:>7.3f}' for x in c_row))
-        print(' '.join(f'{x:>7.3f}' for x in c_ref_row))
+    # for idx, (c_row, c_ref_row) in enumerate(zip(C, C_gt)): 
+    #     print(idx)
+    #     print(' '.join(f'{i:>7d}' for i in range(len(c_row))))
+    #     print(' '.join(f'{x:>7.3f}' for x in c_row))
+    #     print(' '.join(f'{x:>7.3f}' for x in c_ref_row))
     # assert torch.mean(torch.abs(C - C_gt)) / torch.mean(torch.abs(C_gt)) < 0.001
     # baseline_mod = (
     #     torch.nn.Linear(, bias=False).cuda().to(torch.float16)
