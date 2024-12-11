@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstdint>
 #include <cutlass/gemm/device/gemm.h>
 #include <gemm.h>
@@ -27,22 +28,6 @@ template <typename A, typename B> auto ceil_div(A a, B b) { return (a + b - 1) /
 
 // For ldmatrix, a K-stride (32x+16) bytes leads to bank-conflict free access.
 constexpr size_t round_up_to_32x_plus_16(size_t x) { return (((x - 16) + 31) & ~31) + 16; }
-
-// template <typename P>
-// constexpr size_t SHM_K_STRIDE = [] {
-//     constexpr size_t EPB = 2; // Elements per byte
-//     static_assert(P::SHM_K % (EPB * sizeof(int32_t)) == 0);
-//     constexpr size_t SHM_K_INT32S = P::SHM_K / (EPB * sizeof(int32_t));
-//     static_assert(SHM_K_INT32S >= 4);
-//     return (((SHM_K_INT32S - 4 + 7) & ~7) + 4) * sizeof(int32_t);
-// }();
-
-// template <typename P> constexpr size_t SHM_A_SIZE = P::SHM_M * SHM_K_STRIDE<P>;
-// template <typename P> constexpr size_t SHM_B_SIZE = P::SHM_N * SHM_K_STRIDE<P>;
-// template <typename P> constexpr size_t SHM_SIZE = 2 * (SHM_A_SIZE<P> + SHM_B_SIZE<P>);
-
-// template <typename P>
-// constexpr size_t SHM_SIZE_FUSED = 2 * (SHM_A_SIZE<P> + SHM_B_SIZE<P> + P::SHM_M * sizeof(half));
 
 template <typename T> __device__ void async_copy(T *dst, const T *src) {
     static_assert(sizeof(T) == 16 || sizeof(T) == 8 || sizeof(T) == 4);
@@ -113,8 +98,44 @@ __global__ __launch_bounds__(P::N_THR) void matmul_kernel(const uint8_t *A, cons
     uint8_t *__restrict__ smem_A_cur = smem_A, *__restrict__ smem_A_next = smem_A + D::SHM_A_SIZE;
     uint8_t *__restrict__ smem_B_cur = smem_B, *__restrict__ smem_B_next = smem_B + D::SHM_B_SIZE;
 
+    const size_t gmem_m_base = blockIdx.x * P::SHM_M;
+    const size_t gmem_n_base = blockIdx.y * P::SHM_N;
+
 #define unroll _Pragma("unroll")
     const auto async_copy_to_smem = [&](size_t k) {
+        // static_assert(P::SHM_K * P::SHM_M % (P::N_THR * 32) == 0);
+        // static_assert(P::SHM_K * P::SHM_N % (P::N_THR * 32) == 0);
+
+        // // Async at 16 bytes (32 int4s) at once
+        // // Every row has T=(K/32) bytes, and has stride (T+1)*16 bytes to avoid bank conflicts.
+        // constexpr size_t T = P::SHM_K / 32;
+        // static_assert(N_WRP % T == 0);
+        // // Then the bank-conflict-free way of loading is for every warp to load (32/T) rows at a stride of
+        // T.
+        // // Together T warps load 32 rows. So at once we load (N_WRP/T)*32 rows.
+        // static_assert(P::SHM_M % (N_WRP / T * 32) == 0);
+        // static_assert(P::SHM_N % (N_WRP / T * 32) == 0);
+
+        // const size_t tile_mn_base = (wid / T) * 32  // Every T warps load 32 rows
+        //                             + T * (lid / T) // Every warp loads rows at a stride of T
+        //                             + (wid % T);    // Interleave rows loaded by different warps
+        // const size_t tile_k_bytes = (lid % T) * 16; // Which part of the row to load
+        // const size_t gmem_k_bytes = (k / 2) + tile_k_bytes;
+
+        // unroll for (size_t i = 0; i < P::SHM_M; i += (N_WRP / T * 32)) {
+        //     const size_t tile_m = tile_mn_base + i;
+        //     const size_t gmem_m = tile_m + gmem_m_base;
+        //     const float4 *src = reinterpret_cast<const float4 *>(A + gmem_m * (K / EPB) + gmem_k_bytes);
+        //     float4 *dst = reinterpret_cast<float4 *>(smem_A_next + tile_m * D::SHM_K_STRIDE +
+        //     tile_k_bytes); async_copy(dst, src);
+        // }
+        // unroll for (size_t i = 0; i < P::SHM_N; i += (N_WRP / T * 32)) {
+        //     const size_t tile_n = tile_mn_base + i;
+        //     const size_t gmem_n = tile_n + gmem_n_base;
+        //     const float4 *src = reinterpret_cast<const float4 *>(B + gmem_n * (K / EPB) + gmem_k_bytes);
+        //     float4 *dst = reinterpret_cast<float4 *>(smem_B_next + tile_n * D::SHM_K_STRIDE +
+        //     tile_k_bytes); async_copy(dst, src);
+        // }
         unroll for (size_t i = 0; i < P::SHM_M * P::SHM_K; i += P::N_THR * P::CPY_K) {
             // Copy to smem_A
             const size_t tile_idx = i + tid * P::CPY_K;
@@ -464,7 +485,7 @@ void matmul_host_handwritten(const Int4Storage *A, const Int4Storage *B, uint32_
 }
 
 void matmul_hadamard_host(const half *A, const Int4Storage *B, uint32_t M, uint32_t N, uint32_t K, half *C) {
-    using P = MatMulHadamardParams256;
+    using P = MatMulHadamardParams128;
 
     const dim3 dim_block{P::N_THR};
     const dim3 dim_grid(ceil_div(M, P::SHM_M), ceil_div(N, P::SHM_N));
